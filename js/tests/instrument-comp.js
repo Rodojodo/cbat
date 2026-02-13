@@ -12,8 +12,8 @@ export function getInstructions() {
             <li>You will see two instruments: an <strong>Attitude Indicator</strong> and a <strong>Heading Indicator</strong>.</li>
             <li>The Attitude Indicator shows pitch (nose up/down) and bank (roll left/right). Blue = sky, brown = ground.</li>
             <li>The Heading Indicator shows the compass direction the aircraft is flying.</li>
-            <li>Select the 3D aircraft view that matches both instruments.</li>
-            <li>Use process of elimination — check heading first, then pitch/bank.</li>
+            <li><strong>North is directly through the screen</strong> (away from you). An aircraft heading North flies away; heading South flies toward you; heading East flies to the right.</li>
+            <li>Select the aircraft view (1–5) that matches both instruments.</li>
             <li>You have <strong>5 minutes</strong>.</li>
         </ul>
     `;
@@ -36,14 +36,12 @@ function rotateZ(p, a) {
 
 const DEG = Math.PI / 180;
 
-// Camera: looking from above-front-right, giving a 3/4 view
-const CAM_ELEV = 30 * DEG;   // look down 30°
-const CAM_AZI  = 18 * DEG;   // slightly from right
+// Camera: fixed looking North (into screen +Z), slightly elevated
+const CAM_ELEV = 15 * DEG;
 
 function projectPoint(p) {
-    let q = rotateY(p, -CAM_AZI);
-    q = rotateX(q, CAM_ELEV);
-    // orthographic projection — x,y become screen coords, z is depth
+    // Camera looks along +Z, slightly from above
+    let q = rotateX(p, CAM_ELEV);
     return { x: q.x, y: -q.y, depth: q.z };
 }
 
@@ -52,12 +50,9 @@ function transformFace(verts, headingDeg, pitchDeg, bankDeg) {
     const p = pitchDeg * DEG;
     const b = bankDeg * DEG;
     return verts.map(v => {
-        // apply bank (roll around forward axis Z)
-        let q = rotateZ(v, b);
-        // apply pitch (around lateral axis X)
-        q = rotateX(q, -p);
-        // apply heading (around vertical axis Y)
-        q = rotateY(q, h);
+        let q = rotateZ(v, b);    // bank (roll)
+        q = rotateX(q, -p);       // pitch
+        q = rotateY(q, h);        // heading (yaw)
         return q;
     });
 }
@@ -68,188 +63,173 @@ function faceNormal(v0, v1, v2) {
     return { x: ay * bz - az * by, y: az * bx - ax * bz, z: ax * by - ay * bx };
 }
 
+function vecLen(v) {
+    return Math.sqrt(v.x * v.x + v.y * v.y + v.z * v.z);
+}
+
 function faceCentroidDepth(projected) {
     return projected.reduce((s, p) => s + p.depth, 0) / projected.length;
 }
 
+// Light direction: from above and slightly in front-left
+const LIGHT = (() => {
+    const l = { x: -0.2, y: 0.85, z: 0.5 };
+    const len = vecLen(l);
+    return { x: l.x / len, y: l.y / len, z: l.z / len };
+})();
+
+// Compute a red shade from face normal + light direction
+function computeRedShade(normal) {
+    const len = vecLen(normal);
+    if (len < 0.001) return 'rgb(140,20,20)';
+    const nx = normal.x / len, ny = normal.y / len, nz = normal.z / len;
+    const dot = nx * LIGHT.x + ny * LIGHT.y + nz * LIGHT.z;
+    // Brightness range: 0.25 (deep shadow) to 1.0 (full light)
+    const brightness = 0.25 + Math.max(0, dot) * 0.75;
+    const r = Math.round(210 * brightness);
+    const g = Math.round(32 * brightness);
+    const b = Math.round(32 * brightness);
+    return `rgb(${r},${g},${b})`;
+}
+
+function computeCanopyShade(normal) {
+    const len = vecLen(normal);
+    if (len < 0.001) return 'rgb(20,60,90)';
+    const nx = normal.x / len, ny = normal.y / len, nz = normal.z / len;
+    const dot = nx * LIGHT.x + ny * LIGHT.y + nz * LIGHT.z;
+    const brightness = 0.3 + Math.max(0, dot) * 0.7;
+    const r = Math.round(40 * brightness);
+    const g = Math.round(140 * brightness);
+    const b = Math.round(220 * brightness);
+    return `rgb(${r},${g},${b})`;
+}
+
+function computeNozzleShade() {
+    return '#1a1a2e';
+}
+
 // ---- Aircraft model (local coords: nose = +Z, up = +Y, right = +X) ----
-// Units are arbitrary, scaled to fit canvas at draw time
 
 function getAircraftFaces() {
-    // Returns array of { verts: [{x,y,z}...], colorTop, colorBot }
-    // colorTop = color when face normal points "up" (toward camera), colorBot = underside
-    const S = 1; // scale
+    const S = 1;
     return [
-        // ---- Fuselage top ----
-        {
-            verts: [
-                {x:0, y:0.25*S, z:3.8*S},       // nose tip
-                {x:0.5*S, y:0.3*S, z:1.5*S},
-                {x:0.55*S, y:0.3*S, z:-0.5*S},
-                {x:0.4*S, y:0.25*S, z:-3.2*S},
-                {x:-0.4*S, y:0.25*S, z:-3.2*S},
-                {x:-0.55*S, y:0.3*S, z:-0.5*S},
-                {x:-0.5*S, y:0.3*S, z:1.5*S},
-            ],
-            colorTop: '#6b7b94', colorBot: '#2a3448',
-        },
-        // ---- Fuselage bottom ----
-        {
-            verts: [
-                {x:0, y:-0.1*S, z:3.8*S},
-                {x:-0.5*S, y:-0.15*S, z:1.5*S},
-                {x:-0.55*S, y:-0.15*S, z:-0.5*S},
-                {x:-0.4*S, y:-0.1*S, z:-3.2*S},
-                {x:0.4*S, y:-0.1*S, z:-3.2*S},
-                {x:0.55*S, y:-0.15*S, z:-0.5*S},
-                {x:0.5*S, y:-0.15*S, z:1.5*S},
-            ],
-            colorTop: '#2a3448', colorBot: '#4a5a74',
-        },
-        // ---- Fuselage right side ----
-        {
-            verts: [
-                {x:0.5*S, y:0.3*S, z:1.5*S},
-                {x:0.5*S, y:-0.15*S, z:1.5*S},
-                {x:0.55*S, y:-0.15*S, z:-0.5*S},
-                {x:0.55*S, y:0.3*S, z:-0.5*S},
-            ],
-            colorTop: '#5a6a82', colorBot: '#3a4a62',
-        },
-        // ---- Fuselage left side ----
-        {
-            verts: [
-                {x:-0.5*S, y:0.3*S, z:1.5*S},
-                {x:-0.55*S, y:0.3*S, z:-0.5*S},
-                {x:-0.55*S, y:-0.15*S, z:-0.5*S},
-                {x:-0.5*S, y:-0.15*S, z:1.5*S},
-            ],
-            colorTop: '#5a6a82', colorBot: '#3a4a62',
-        },
-        // ---- Cockpit (canopy) ----
-        {
-            verts: [
-                {x:0, y:0.55*S, z:2.4*S},
-                {x:0.3*S, y:0.35*S, z:1.8*S},
-                {x:0.3*S, y:0.35*S, z:0.8*S},
-                {x:-0.3*S, y:0.35*S, z:0.8*S},
-                {x:-0.3*S, y:0.35*S, z:1.8*S},
-            ],
-            colorTop: '#38bdf8', colorBot: '#1a4060',
-        },
-        // ---- Right wing top ----
-        {
-            verts: [
-                {x:0.6*S, y:0.1*S, z:0.2*S},
-                {x:4.2*S, y:0.02*S, z:-0.6*S},
-                {x:4.0*S, y:0.02*S, z:-1.3*S},
-                {x:0.6*S, y:0.1*S, z:-1.6*S},
-            ],
-            colorTop: '#7a8aa2', colorBot: '#2a3a52',
-        },
-        // ---- Right wing bottom ----
-        {
-            verts: [
-                {x:0.6*S, y:-0.05*S, z:0.2*S},
-                {x:0.6*S, y:-0.05*S, z:-1.6*S},
-                {x:4.0*S, y:-0.08*S, z:-1.3*S},
-                {x:4.2*S, y:-0.08*S, z:-0.6*S},
-            ],
-            colorTop: '#2a3a52', colorBot: '#7a8aa2',
-        },
-        // ---- Left wing top ----
-        {
-            verts: [
-                {x:-0.6*S, y:0.1*S, z:0.2*S},
-                {x:-0.6*S, y:0.1*S, z:-1.6*S},
-                {x:-4.0*S, y:0.02*S, z:-1.3*S},
-                {x:-4.2*S, y:0.02*S, z:-0.6*S},
-            ],
-            colorTop: '#7a8aa2', colorBot: '#2a3a52',
-        },
-        // ---- Left wing bottom ----
-        {
-            verts: [
-                {x:-0.6*S, y:-0.05*S, z:0.2*S},
-                {x:-4.2*S, y:-0.08*S, z:-0.6*S},
-                {x:-4.0*S, y:-0.08*S, z:-1.3*S},
-                {x:-0.6*S, y:-0.05*S, z:-1.6*S},
-            ],
-            colorTop: '#2a3a52', colorBot: '#7a8aa2',
-        },
-        // ---- Tail fin (vertical stabilizer) ----
-        {
-            verts: [
-                {x:0, y:0.3*S, z:-2.0*S},
-                {x:0, y:2.0*S, z:-3.4*S},
-                {x:0, y:0.3*S, z:-3.4*S},
-            ],
-            colorTop: '#8899b3', colorBot: '#4a5a72',
-        },
-        // ---- Tail fin right face ----
-        {
-            verts: [
-                {x:0.04*S, y:0.3*S, z:-2.0*S},
-                {x:0.04*S, y:2.0*S, z:-3.4*S},
-                {x:0.04*S, y:0.3*S, z:-3.4*S},
-            ],
-            colorTop: '#6a7a92', colorBot: '#4a5a72',
-        },
-        // ---- Tail fin left face ----
-        {
-            verts: [
-                {x:-0.04*S, y:0.3*S, z:-2.0*S},
-                {x:-0.04*S, y:0.3*S, z:-3.4*S},
-                {x:-0.04*S, y:2.0*S, z:-3.4*S},
-            ],
-            colorTop: '#5a6a82', colorBot: '#4a5a72',
-        },
-        // ---- Right horizontal stabilizer top ----
-        {
-            verts: [
-                {x:0.3*S, y:0.2*S, z:-2.4*S},
-                {x:1.8*S, y:0.15*S, z:-3.0*S},
-                {x:1.6*S, y:0.15*S, z:-3.4*S},
-                {x:0.3*S, y:0.2*S, z:-3.2*S},
-            ],
-            colorTop: '#7a8aa2', colorBot: '#2a3a52',
-        },
-        // ---- Left horizontal stabilizer top ----
-        {
-            verts: [
-                {x:-0.3*S, y:0.2*S, z:-2.4*S},
-                {x:-0.3*S, y:0.2*S, z:-3.2*S},
-                {x:-1.6*S, y:0.15*S, z:-3.4*S},
-                {x:-1.8*S, y:0.15*S, z:-3.0*S},
-            ],
-            colorTop: '#7a8aa2', colorBot: '#2a3a52',
-        },
-        // ---- Nose cone ----
-        {
-            verts: [
-                {x:0, y:0.25*S, z:3.8*S},
-                {x:0.2*S, y:0.1*S, z:3.2*S},
-                {x:0, y:-0.1*S, z:3.8*S},
-                {x:-0.2*S, y:0.1*S, z:3.2*S},
-            ],
-            colorTop: '#ef4444', colorBot: '#b91c1c',
-        },
-        // ---- Engine nozzle (rear) ----
-        {
-            verts: [
-                {x:0.35*S, y:0.2*S, z:-3.2*S},
-                {x:0.35*S, y:-0.05*S, z:-3.2*S},
-                {x:-0.35*S, y:-0.05*S, z:-3.2*S},
-                {x:-0.35*S, y:0.2*S, z:-3.2*S},
-            ],
-            colorTop: '#1a1a2e', colorBot: '#1a1a2e',
-        },
+        // Fuselage top
+        { verts: [
+            {x:0, y:0.25*S, z:3.8*S},
+            {x:0.5*S, y:0.3*S, z:1.5*S},
+            {x:0.55*S, y:0.3*S, z:-0.5*S},
+            {x:0.4*S, y:0.25*S, z:-3.2*S},
+            {x:-0.4*S, y:0.25*S, z:-3.2*S},
+            {x:-0.55*S, y:0.3*S, z:-0.5*S},
+            {x:-0.5*S, y:0.3*S, z:1.5*S},
+        ], part: 'body' },
+        // Fuselage bottom
+        { verts: [
+            {x:0, y:-0.1*S, z:3.8*S},
+            {x:-0.5*S, y:-0.15*S, z:1.5*S},
+            {x:-0.55*S, y:-0.15*S, z:-0.5*S},
+            {x:-0.4*S, y:-0.1*S, z:-3.2*S},
+            {x:0.4*S, y:-0.1*S, z:-3.2*S},
+            {x:0.55*S, y:-0.15*S, z:-0.5*S},
+            {x:0.5*S, y:-0.15*S, z:1.5*S},
+        ], part: 'body' },
+        // Fuselage right side
+        { verts: [
+            {x:0.5*S, y:0.3*S, z:1.5*S},
+            {x:0.5*S, y:-0.15*S, z:1.5*S},
+            {x:0.55*S, y:-0.15*S, z:-0.5*S},
+            {x:0.55*S, y:0.3*S, z:-0.5*S},
+        ], part: 'body' },
+        // Fuselage left side
+        { verts: [
+            {x:-0.5*S, y:0.3*S, z:1.5*S},
+            {x:-0.55*S, y:0.3*S, z:-0.5*S},
+            {x:-0.55*S, y:-0.15*S, z:-0.5*S},
+            {x:-0.5*S, y:-0.15*S, z:1.5*S},
+        ], part: 'body' },
+        // Cockpit (canopy)
+        { verts: [
+            {x:0, y:0.55*S, z:2.4*S},
+            {x:0.3*S, y:0.35*S, z:1.8*S},
+            {x:0.3*S, y:0.35*S, z:0.8*S},
+            {x:-0.3*S, y:0.35*S, z:0.8*S},
+            {x:-0.3*S, y:0.35*S, z:1.8*S},
+        ], part: 'canopy' },
+        // Right wing top
+        { verts: [
+            {x:0.6*S, y:0.1*S, z:0.2*S},
+            {x:4.2*S, y:0.02*S, z:-0.6*S},
+            {x:4.0*S, y:0.02*S, z:-1.3*S},
+            {x:0.6*S, y:0.1*S, z:-1.6*S},
+        ], part: 'body' },
+        // Right wing bottom
+        { verts: [
+            {x:0.6*S, y:-0.05*S, z:0.2*S},
+            {x:0.6*S, y:-0.05*S, z:-1.6*S},
+            {x:4.0*S, y:-0.08*S, z:-1.3*S},
+            {x:4.2*S, y:-0.08*S, z:-0.6*S},
+        ], part: 'body' },
+        // Left wing top
+        { verts: [
+            {x:-0.6*S, y:0.1*S, z:0.2*S},
+            {x:-0.6*S, y:0.1*S, z:-1.6*S},
+            {x:-4.0*S, y:0.02*S, z:-1.3*S},
+            {x:-4.2*S, y:0.02*S, z:-0.6*S},
+        ], part: 'body' },
+        // Left wing bottom
+        { verts: [
+            {x:-0.6*S, y:-0.05*S, z:0.2*S},
+            {x:-4.2*S, y:-0.08*S, z:-0.6*S},
+            {x:-4.0*S, y:-0.08*S, z:-1.3*S},
+            {x:-0.6*S, y:-0.05*S, z:-1.6*S},
+        ], part: 'body' },
+        // Tail fin right
+        { verts: [
+            {x:0.04*S, y:0.3*S, z:-2.0*S},
+            {x:0.04*S, y:2.0*S, z:-3.4*S},
+            {x:0.04*S, y:0.3*S, z:-3.4*S},
+        ], part: 'body' },
+        // Tail fin left
+        { verts: [
+            {x:-0.04*S, y:0.3*S, z:-2.0*S},
+            {x:-0.04*S, y:0.3*S, z:-3.4*S},
+            {x:-0.04*S, y:2.0*S, z:-3.4*S},
+        ], part: 'body' },
+        // Right horizontal stabilizer
+        { verts: [
+            {x:0.3*S, y:0.2*S, z:-2.4*S},
+            {x:1.8*S, y:0.15*S, z:-3.0*S},
+            {x:1.6*S, y:0.15*S, z:-3.4*S},
+            {x:0.3*S, y:0.2*S, z:-3.2*S},
+        ], part: 'body' },
+        // Left horizontal stabilizer
+        { verts: [
+            {x:-0.3*S, y:0.2*S, z:-2.4*S},
+            {x:-0.3*S, y:0.2*S, z:-3.2*S},
+            {x:-1.6*S, y:0.15*S, z:-3.4*S},
+            {x:-1.8*S, y:0.15*S, z:-3.0*S},
+        ], part: 'body' },
+        // Nose cone
+        { verts: [
+            {x:0, y:0.25*S, z:3.8*S},
+            {x:0.2*S, y:0.1*S, z:3.2*S},
+            {x:0, y:-0.1*S, z:3.8*S},
+            {x:-0.2*S, y:0.1*S, z:3.2*S},
+        ], part: 'body' },
+        // Engine nozzle
+        { verts: [
+            {x:0.35*S, y:0.2*S, z:-3.2*S},
+            {x:0.35*S, y:-0.05*S, z:-3.2*S},
+            {x:-0.35*S, y:-0.05*S, z:-3.2*S},
+            {x:-0.35*S, y:0.2*S, z:-3.2*S},
+        ], part: 'nozzle' },
     ];
 }
 
+
 // ---- Drawing functions ----
 
-function drawAircraftOption(canvas, headingDeg, bankDeg, pitchDeg) {
+function drawAircraftOption(canvas, headingDeg, bankDeg, pitchDeg, optionNum) {
     const c = canvas.getContext('2d');
     const w = canvas.width;
     const h = canvas.height;
@@ -258,71 +238,65 @@ function drawAircraftOption(canvas, headingDeg, bankDeg, pitchDeg) {
 
     c.clearRect(0, 0, w, h);
 
-    // ---- Background: sky/ground split showing aircraft attitude ----
-    // The horizon line tilts with bank and shifts with pitch
-    c.save();
-    c.translate(cx, cy);
+    // Grey gradient "tunnel" background
+    const grad = c.createRadialGradient(cx, cy, 0, cx, cy, w * 0.7);
+    grad.addColorStop(0, '#9aa0a8');
+    grad.addColorStop(0.5, '#6a7078');
+    grad.addColorStop(1, '#3a3e44');
+    c.fillStyle = grad;
+    c.fillRect(0, 0, w, h);
 
-    // Horizon offset for pitch (positive pitch = nose up = horizon moves down)
-    const horizonShift = (pitchDeg / 90) * h * 0.6;
-    // Bank tilts the horizon
-    const bankRad = bankDeg * DEG;
-
-    c.rotate(-bankRad);
-    c.translate(0, horizonShift);
-
-    // Sky
-    c.fillStyle = '#1a4a7a';
-    c.fillRect(-w, -h * 2, w * 2, h * 2);
-    // Ground
-    c.fillStyle = '#5a4a20';
-    c.fillRect(-w, 0, w * 2, h * 2);
-    // Horizon line
-    c.strokeStyle = 'rgba(255,255,255,0.25)';
+    // Subtle perspective depth lines converging to centre
+    c.strokeStyle = 'rgba(255,255,255,0.06)';
     c.lineWidth = 1;
-    c.beginPath();
-    c.moveTo(-w, 0);
-    c.lineTo(w, 0);
-    c.stroke();
-
-    c.restore();
+    const corners = [[0,0],[w,0],[w,h],[0,h]];
+    for (const [ex, ey] of corners) {
+        c.beginPath();
+        c.moveTo(ex, ey);
+        c.lineTo(cx, cy);
+        c.stroke();
+    }
 
     // ---- Render the 3D aircraft ----
     const faces = getAircraftFaces();
     const rendered = [];
 
-    for (const face of faces) {
-        // Transform vertices by heading, pitch, bank
-        const worldVerts = transformFace(face.verts, headingDeg, pitchDeg, bankDeg);
+    // Camera direction for backface culling
+    const camDir = { x: 0, y: -Math.sin(CAM_ELEV), z: Math.cos(CAM_ELEV) };
 
-        // Project to 2D
+    for (const face of faces) {
+        const worldVerts = transformFace(face.verts, headingDeg, pitchDeg, bankDeg);
         const projected = worldVerts.map(v => projectPoint(v));
 
-        // Compute face normal to determine front/back facing
         if (worldVerts.length >= 3) {
             const normal = faceNormal(worldVerts[0], worldVerts[1], worldVerts[2]);
-            // Camera direction (simplified: mostly looking along -Z after camera rotation)
-            const camDir = { x: Math.sin(CAM_AZI), y: -Math.sin(CAM_ELEV), z: -Math.cos(CAM_ELEV) * Math.cos(CAM_AZI) };
-            const dot = normal.x * camDir.x + normal.y * camDir.y + normal.z * camDir.z;
 
-            // Choose color based on which side faces camera
-            const color = dot > 0 ? face.colorTop : face.colorBot;
+            // Determine color based on part type and lighting
+            let color;
+            if (face.part === 'canopy') {
+                color = computeCanopyShade(normal);
+            } else if (face.part === 'nozzle') {
+                color = computeNozzleShade();
+            } else {
+                color = computeRedShade(normal);
+            }
 
-            const avgDepth = faceCentroidDepth(projected);
-
-            rendered.push({ projected, color, depth: avgDepth });
+            rendered.push({
+                projected,
+                color,
+                depth: faceCentroidDepth(projected),
+            });
         }
     }
 
-    // Painter's algorithm: draw far faces first
+    // Painter's algorithm
     rendered.sort((a, b) => a.depth - b.depth);
 
-    // Scale to fit canvas
     const scale = Math.min(w, h) * 0.11;
 
     for (const face of rendered) {
         c.fillStyle = face.color;
-        c.strokeStyle = 'rgba(0,0,0,0.3)';
+        c.strokeStyle = 'rgba(0,0,0,0.25)';
         c.lineWidth = 0.5;
         c.beginPath();
         face.projected.forEach((p, i) => {
@@ -336,31 +310,20 @@ function drawAircraftOption(canvas, headingDeg, bankDeg, pitchDeg) {
         c.stroke();
     }
 
-    // ---- Subtle compass arrow in corner showing heading ----
-    const arrowSize = 12;
-    const arrowX = w - 16;
-    const arrowY = 16;
-    c.save();
-    c.translate(arrowX, arrowY);
-    c.rotate(headingDeg * DEG);
-    c.fillStyle = 'rgba(255,255,255,0.4)';
-    c.beginPath();
-    c.moveTo(0, -arrowSize);
-    c.lineTo(arrowSize * 0.4, arrowSize * 0.4);
-    c.lineTo(0, arrowSize * 0.15);
-    c.lineTo(-arrowSize * 0.4, arrowSize * 0.4);
-    c.closePath();
-    c.fill();
-    // N label
-    c.fillStyle = 'rgba(255,255,255,0.3)';
-    c.font = '7px sans-serif';
-    c.textAlign = 'center';
-    c.fillText('N', 0, -arrowSize - 3);
-    c.restore();
+    // Option number label (bottom-left corner)
+    if (optionNum !== undefined) {
+        c.fillStyle = 'rgba(0,0,0,0.5)';
+        c.fillRect(2, h - 20, 18, 18);
+        c.fillStyle = '#fff';
+        c.font = 'bold 13px sans-serif';
+        c.textAlign = 'center';
+        c.textBaseline = 'middle';
+        c.fillText(String(optionNum), 11, h - 11);
+    }
 }
 
 
-// ---- Instrument drawing (these are fine as-is, just rendering real gauges) ----
+// ---- Instrument drawing ----
 
 function drawAttitudeIndicator(canvas, pitch, bank) {
     const ctx2d = canvas.getContext('2d');
@@ -450,7 +413,6 @@ function drawAttitudeIndicator(canvas, pitch, bank) {
     ctx2d.lineTo(triX + 6, triY - 12);
     ctx2d.closePath();
     ctx2d.fill();
-
     ctx2d.fillStyle = '#fbbf24';
     ctx2d.beginPath();
     ctx2d.moveTo(0, -r + 2);
@@ -519,22 +481,34 @@ function drawHeadingIndicator(canvas, headingDeg) {
 
     ctx2d.restore();
 
-    // Fixed aircraft symbol at top
-    ctx2d.fillStyle = '#fbbf24';
+    // Fixed red aircraft silhouette in centre (pointing up = North)
+    ctx2d.fillStyle = '#d63030';
     ctx2d.beginPath();
-    ctx2d.moveTo(cx, cy - r + 2);
-    ctx2d.lineTo(cx - 8, cy - r + 18);
-    ctx2d.lineTo(cx + 8, cy - r + 18);
+    // Fuselage
+    ctx2d.moveTo(cx, cy - r * 0.35);           // nose
+    ctx2d.lineTo(cx + 3, cy - r * 0.15);
+    ctx2d.lineTo(cx + 3, cy + r * 0.25);
+    ctx2d.lineTo(cx - 3, cy + r * 0.25);
+    ctx2d.lineTo(cx - 3, cy - r * 0.15);
     ctx2d.closePath();
     ctx2d.fill();
-
-    // Lubber line
-    ctx2d.strokeStyle = '#fbbf24';
-    ctx2d.lineWidth = 2;
+    // Wings
     ctx2d.beginPath();
-    ctx2d.moveTo(cx, cy - r + 18);
-    ctx2d.lineTo(cx, cy - r * 0.4);
-    ctx2d.stroke();
+    ctx2d.moveTo(cx - r * 0.28, cy + r * 0.05);
+    ctx2d.lineTo(cx - 3, cy - r * 0.05);
+    ctx2d.lineTo(cx + 3, cy - r * 0.05);
+    ctx2d.lineTo(cx + r * 0.28, cy + r * 0.05);
+    ctx2d.lineTo(cx + 3, cy + r * 0.08);
+    ctx2d.lineTo(cx - 3, cy + r * 0.08);
+    ctx2d.closePath();
+    ctx2d.fill();
+    // Tailplane
+    ctx2d.beginPath();
+    ctx2d.moveTo(cx - r * 0.15, cy + r * 0.22);
+    ctx2d.lineTo(cx, cy + r * 0.15);
+    ctx2d.lineTo(cx + r * 0.15, cy + r * 0.22);
+    ctx2d.closePath();
+    ctx2d.fill();
 
     // Border
     ctx2d.strokeStyle = '#5a6a82';
@@ -568,16 +542,12 @@ export function create(ctx) {
 
         const correctAnswer = { heading, bank, pitch };
 
-        // Generate 3 wrong answers — each differs in exactly 1 or 2 attributes
-        // to make it a genuine visual discrimination task
+        // Generate 4 wrong answers — differ by 1 or 2 attributes
         const options = [correctAnswer];
-        const attempts = 0;
-        while (options.length < 4) {
-            // Decide how many attributes to change (1 or 2)
+        while (options.length < 5) {
             const changeCnt = options.length <= 2 ? 1 : Math.random() < 0.5 ? 1 : 2;
             const attrs = ['heading', 'bank', 'pitch'];
-            // Shuffle and pick changeCnt attributes to alter
-            const shuffled = attrs.sort(() => Math.random() - 0.5);
+            const shuffled = [...attrs].sort(() => Math.random() - 0.5);
             const toChange = shuffled.slice(0, changeCnt);
 
             let wrongH = heading, wrongB = bank, wrongP = pitch;
@@ -595,7 +565,6 @@ export function create(ctx) {
                 wrongP = pool[Math.floor(Math.random() * pool.length)];
             }
 
-            // Check it actually differs and isn't a duplicate
             if (wrongH === heading && wrongB === bank && wrongP === pitch) continue;
             const dup = options.some(o => o.heading === wrongH && o.bank === wrongB && o.pitch === wrongP);
             if (dup) continue;
@@ -634,7 +603,7 @@ export function create(ctx) {
                     <p>Heading Indicator</p>
                 </div>
             </div>
-            <div class="insc-options" id="insc-options"></div>
+            <div class="insc-options insc-options-5" id="insc-options"></div>
         `;
 
         drawAttitudeIndicator(document.getElementById('ai-canvas'), q.correctAnswer.pitch, q.correctAnswer.bank);
@@ -647,7 +616,7 @@ export function create(ctx) {
             div.innerHTML = `<canvas width="150" height="150"></canvas>`;
             const optCanvas = div.querySelector('canvas');
             const optHeadingDeg = HEADING_DEGS[opt.heading];
-            drawAircraftOption(optCanvas, optHeadingDeg, opt.bank, opt.pitch);
+            drawAircraftOption(optCanvas, optHeadingDeg, opt.bank, opt.pitch, idx + 1);
 
             div.addEventListener('click', () => {
                 if (destroyed) return;

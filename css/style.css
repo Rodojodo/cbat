@@ -530,6 +530,10 @@ body {
     gap: 10px;
     max-width: 700px;
 }
+.insc-options-5 {
+    grid-template-columns: repeat(5, 1fr);
+    max-width: 880px;
+}
 .insc-option {
     background: var(--bg-card);
     border: 2px solid var(--border-color);
