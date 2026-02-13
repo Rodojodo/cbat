@@ -516,6 +516,8 @@ body {
     border: 1px solid var(--border-color);
     border-radius: 50%;
     background: #111;
+    width: 160px;
+    height: 160px;
 }
 .insc-instrument p {
     margin-top: 6px;
@@ -543,6 +545,7 @@ body {
 .insc-option canvas {
     display: block;
     margin: 0 auto;
+    border-radius: var(--radius-sm);
 }
 .insc-option.correct {
     border-color: var(--accent-green);
